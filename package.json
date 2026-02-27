@@ -1,0 +1,18 @@
+{
+  "name": "js-sqlite-workers",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down -v",
+    "db:latency": "docker compose exec postgres sh -c 'apk add --no-cache -q iproute2 && tc qdisc replace dev eth0 root netem delay 50ms'",
+    "db:no-latency": "docker compose exec postgres tc qdisc del dev eth0 root netem"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "pg": "^8.13.1",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3"
+  }
+}
