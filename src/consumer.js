@@ -31,11 +31,15 @@ const markDone = db.prepare(`
 const markFailed = db.prepare(`UPDATE work_queue SET status = 'failed' WHERE id = ?`);
 
 let producerDone = false;
+let draining = false;
 let emptyPolls = 0;
 
 parentPort.on('message', (msg) => {
   if (msg.type === 'producer_done') {
     producerDone = true;
+  }
+  if (msg.type === 'drain') {
+    draining = true;
   }
 });
 
@@ -53,6 +57,12 @@ function randomDelay() {
 }
 
 async function poll() {
+  if (draining) {
+    db.close();
+    parentPort.postMessage({ type: 'consumer_done' });
+    return;
+  }
+
   let row;
   try {
     row = db.transaction(() => dequeue.get())();

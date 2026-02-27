@@ -42,6 +42,7 @@ const consumersDone = new Set();
 // --- Shutdown coordination ---
 let shuttingDown = false;
 let deadlineTimer;
+let drainTimeout;
 
 function printSummary() {
   const elapsed = performance.now() - pipelineStart;
@@ -150,6 +151,7 @@ async function shutdown(code) {
 
   clearInterval(progressInterval);
   clearTimeout(deadlineTimer);
+  clearTimeout(drainTimeout);
 
   // Terminate all consumer workers
   await Promise.allSettled(consumers.map((w) => w.terminate()));
@@ -246,10 +248,17 @@ const progressInterval = setInterval(() => {
   log.info({ total, done, pending, inFlight: processing, failed }, 'progress');
 }, PROGRESS_INTERVAL_MS);
 
-// Deadline timer — graceful exit after --max-duration seconds
+// Deadline timer — graceful drain after --max-duration seconds
 if (MAX_DURATION > 0) {
   deadlineTimer = setTimeout(() => {
-    log.warn({ maxDuration: MAX_DURATION }, 'max duration reached, shutting down');
-    shutdown(0);
+    log.warn({ maxDuration: MAX_DURATION }, 'max duration reached, draining consumers');
+    for (const c of consumers) {
+      c.postMessage({ type: 'drain' });
+    }
+    // Safety net: force shutdown if consumers don't finish within 30s
+    drainTimeout = setTimeout(() => {
+      log.warn('drain timeout exceeded, forcing shutdown');
+      shutdown(0);
+    }, 30_000);
   }, MAX_DURATION * 1000);
 }
