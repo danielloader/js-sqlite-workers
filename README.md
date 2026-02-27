@@ -55,7 +55,7 @@ sequenceDiagram
     Main->>Consumer: spawn (x N)
 
     loop Paginated source SQL read
-        Producer->>SQLite: BEGIN IMMEDIATE; INSERT batch; COMMIT
+        Producer->>SQLite: BEGIN IMMEDIATE → INSERT batch → COMMIT
         Producer->>Main: postMessage(batch_inserted)
     end
 
@@ -63,7 +63,7 @@ sequenceDiagram
     Main->>Consumer: postMessage(producer_done)
 
     loop Poll queue
-        Consumer->>SQLite: BEGIN IMMEDIATE; UPDATE...RETURNING; COMMIT
+        Consumer->>SQLite: BEGIN IMMEDIATE → UPDATE...RETURNING → COMMIT
         Consumer->>Consumer: 3x parallel HTTP requests
         Consumer->>SQLite: UPDATE row with results
     end
