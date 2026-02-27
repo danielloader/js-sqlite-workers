@@ -29,6 +29,11 @@ export const SQLITE_PATH = join(__dirname, '..', 'work_queue.db');
 export const NUM_CONSUMERS = parseInt(flags.consumers, 10);
 export const PG_PAGE_SIZE = parseInt(flags['batch-size'], 10);
 export const ROW_LIMIT = parseInt(flags.limit, 10);  // 0 = no limit
+
+if (!(NUM_CONSUMERS >= 1)) throw new Error(`--consumers must be >= 1, got: ${flags.consumers}`);
+if (!(PG_PAGE_SIZE >= 1)) throw new Error(`--batch-size must be >= 1, got: ${flags['batch-size']}`);
+if (!(ROW_LIMIT >= 0)) throw new Error(`--limit must be >= 0, got: ${flags.limit}`);
+
 export const HTTPBIN_URL = process.env.HTTPBIN_URL ?? 'http://localhost:8080';
 export const PROGRESS_INTERVAL_MS = 2000;
 export const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info';

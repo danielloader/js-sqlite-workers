@@ -35,33 +35,35 @@ async function produce() {
   let offset = 0;
   let totalInserted = 0;
 
-  while (true) {
-    const { rows } = await client.query(
-      'SELECT * FROM people ORDER BY id LIMIT $1 OFFSET $2',
-      [PG_PAGE_SIZE, offset]
-    );
+  try {
+    while (true) {
+      const { rows } = await client.query(
+        'SELECT * FROM people ORDER BY id LIMIT $1 OFFSET $2',
+        [PG_PAGE_SIZE, offset]
+      );
 
-    if (rows.length === 0) break;
+      if (rows.length === 0) break;
 
-    // Trim the last page if a row limit would be exceeded
-    const remaining = ROW_LIMIT > 0 ? ROW_LIMIT - totalInserted : rows.length;
-    const batch = remaining < rows.length ? rows.slice(0, remaining) : rows;
+      // Trim the last page if a row limit would be exceeded
+      const remaining = ROW_LIMIT > 0 ? ROW_LIMIT - totalInserted : rows.length;
+      const batch = remaining < rows.length ? rows.slice(0, remaining) : rows;
 
-    insertBatch(batch);
-    totalInserted += batch.length;
-    log.info({ batchCount: rows.length, totalInserted }, 'batch inserted');
+      insertBatch(batch);
+      totalInserted += batch.length;
+      log.info({ batchCount: rows.length, totalInserted }, 'batch inserted');
 
-    parentPort.postMessage({ type: 'batch_inserted', count: batch.length });
+      parentPort.postMessage({ type: 'batch_inserted', count: batch.length });
 
-    if (ROW_LIMIT > 0 && totalInserted >= ROW_LIMIT) break;
-    offset += PG_PAGE_SIZE;
+      if (ROW_LIMIT > 0 && totalInserted >= ROW_LIMIT) break;
+      offset += PG_PAGE_SIZE;
+    }
+
+    log.info({ totalInserted }, 'done inserting rows');
+    parentPort.postMessage({ type: 'producer_done', totalInserted });
+  } finally {
+    await client.end();
+    db.close();
   }
-
-  log.info({ totalInserted }, 'done inserting rows');
-  parentPort.postMessage({ type: 'producer_done', totalInserted });
-
-  await client.end();
-  db.close();
 }
 
 produce().catch((err) => {

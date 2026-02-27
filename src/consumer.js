@@ -39,6 +39,7 @@ parentPort.on('message', (msg) => {
   }
 });
 
+const FETCH_TIMEOUT_MS = 30_000;
 const MOCK_CPU_LOAD = process.env.MOCK_CPU_LOAD === 'true';
 
 function cpuBurn() {
@@ -87,7 +88,7 @@ async function poll() {
     const results = await Promise.all(
       delays.map(async (d) => {
         const start = performance.now();
-        const res = await fetch(`${httpbinUrl}/delay/${d}`);
+        const res = await fetch(`${httpbinUrl}/delay/${d}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
         const duration = performance.now() - start;
         const body = await res.text();
         return { body, status: res.status, duration };
@@ -105,12 +106,12 @@ async function poll() {
 
     const data = JSON.parse(row.payload);
     log.debug({ sourceId: row.source_id, personName: data.name, dept: data.department }, 'processed row');
+    parentPort.postMessage({ type: 'item_processed', sourceId: row.source_id });
   } catch (err) {
     log.error({ rowId: row.id, err: err.message }, 'failed to process row');
     markFailed.run(row.id);
+    parentPort.postMessage({ type: 'item_failed', sourceId: row.source_id });
   }
-
-  parentPort.postMessage({ type: 'item_processed', sourceId: row.source_id });
   // Work available — schedule next poll immediately (no delay)
   setImmediate(poll);
 }
