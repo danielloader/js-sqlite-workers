@@ -36,6 +36,9 @@ graph TD
     M -->|postMessage: producer_done| C1
     M -->|postMessage: producer_done| C2
     M -->|postMessage: producer_done| CN
+    M -.->|postMessage: drain| C1
+    M -.->|postMessage: drain| C2
+    M -.->|postMessage: drain| CN
     C1 -->|postMessage: consumer_done| M
     C2 -->|postMessage: consumer_done| M
     CN -->|postMessage: consumer_done| M
@@ -99,7 +102,9 @@ SQLite is single-writer. The system handles this through:
 
 Each thread opens its own `better-sqlite3` connection. Connections are not shared across threads.
 
-## Consumer shutdown logic
+## Shutdown and graceful drain
+
+### Normal completion
 
 Consumers cannot simply exit when the queue is empty — the producer may still be inserting rows. A naive "exit on empty poll" would race against in-flight batch inserts.
 
@@ -120,6 +125,33 @@ stateDiagram-v2
 ```
 
 The 3-poll guard exists because `producer_done` can arrive between batch inserts — a single empty poll immediately after the message is not proof that the queue is fully drained. Three consecutive empty polls (each 200ms apart) provides sufficient confidence that no more rows are in flight.
+
+### Deadline drain (`--max-duration`)
+
+When the deadline timer fires, the pipeline uses a two-phase approach instead of immediately terminating workers. This lets in-flight HTTP requests complete so rows don't get stuck in `processing`.
+
+```mermaid
+sequenceDiagram
+    participant Main
+    participant Consumer
+
+    Note over Main: deadline fires
+    Main->>Consumer: postMessage(drain) to all
+    Main->>Main: start 30s safety timer
+
+    Note over Consumer: finishes current row (if any)
+    Consumer->>Consumer: next poll() sees draining=true
+    Consumer->>Consumer: close db
+    Consumer->>Main: postMessage(consumer_done)
+
+    alt All consumers respond
+        Main->>Main: shutdown(0) — summary, cleanup, exit
+    else Safety timer fires (consumer hung)
+        Main->>Main: shutdown(0) — force-terminate remaining
+    end
+```
+
+The `drain` message reuses the same `postMessage` channel as `producer_done`. When a consumer sees the flag, it stops dequeuing new rows but any in-flight work (HTTP calls from the previous poll iteration) completes normally before the flag is checked. The 30-second safety timer ensures the pipeline always exits even if a consumer hangs on a slow request.
 
 ## Project structure
 
@@ -164,6 +196,7 @@ npm start -- [options]
 | `--consumers` | `-c` | `4` | Number of consumer worker threads |
 | `--batch-size` | `-b` | `100` | PostgreSQL page size for producer reads |
 | `--limit` | `-l` | `0` | Maximum rows to process (0 = unlimited) |
+| `--max-duration` | `-t` | `0` | Maximum pipeline runtime in seconds (0 = unlimited) |
 
 ### Environment variables
 
@@ -187,6 +220,9 @@ npm start
 # 3 consumers, small batches, limited to 20 rows
 npm start -- -c 3 -b 5 -l 20
 
+# Stop after 30 seconds, draining in-flight work gracefully
+npm start -- -c 4 -b 100 -t 30
+
 # Debug logging
 LOG_LEVEL=debug npm start -- -c 2 -l 10
 
@@ -196,6 +232,28 @@ LOG_LEVEL=warn npm start -- -c 4
 # Demonstrate multi-core utilisation by calculating fibonaci sequences
 MOCK_CPU_LOAD=true npm start -- -c 4 -b 100 -l 200
 ```
+
+## Pipeline summary
+
+On shutdown the main thread prints a summary report to stdout with row counts, HTTP latency percentiles, and total pipeline duration:
+
+```text
+  PIPELINE SUMMARY
+
+  rows_done ··························· 200
+  rows_failed ························· 0
+  rows_total ·························· 200
+
+  http_call_1_duration ················ avg=297ms     min=175ms     med=289ms     max=591ms     p(90)=387ms   p(95)=436ms
+  http_call_2_duration ················ avg=295ms     min=166ms     med=286ms     max=583ms     p(90)=396ms   p(95)=421ms
+  http_call_3_duration ················ avg=302ms     min=163ms     med=295ms     max=648ms     p(90)=393ms   p(95)=432ms
+  http_call_duration ·················· avg=298ms     min=163ms     med=290ms     max=648ms     p(90)=391ms   p(95)=430ms
+
+  consumers ··························· 4
+  pipeline_duration ··················· 18.19s
+```
+
+The summary is printed regardless of whether the pipeline completed normally or was stopped by `--max-duration`. Any rows left in `processing` at shutdown are reset to `pending` so they can be identified in the database.
 
 ## Querying results
 
